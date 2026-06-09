@@ -17,13 +17,13 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 # ── Credentials from GitHub Secrets ─────────────────────────────────────────
-MHTCET_EMAIL    = os.environ["MHTCET_EMAIL"]
-MHTCET_PASSWORD = os.environ["MHTCET_PASSWORD"]
+MHTCET_EMAIL    = os.environ.get("MHTCET_EMAIL")
+MHTCET_PASSWORD = os.environ.get("MHTCET_PASSWORD")
 
-TWILIO_ACCOUNT_SID = os.environ["TWILIO_ACCOUNT_SID"]
-TWILIO_AUTH_TOKEN  = os.environ["TWILIO_AUTH_TOKEN"]
-TWILIO_FROM_NUMBER = os.environ["TWILIO_FROM_NUMBER"]
-YOUR_PHONE_NUMBER  = os.environ["YOUR_PHONE_NUMBER"]
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN  = os.environ.get("TWILIO_AUTH_TOKEN")
+TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER")
+YOUR_PHONE_NUMBER  = os.environ.get("YOUR_PHONE_NUMBER")
 
 PORTAL_URL = "https://portal-2026.maharashtracet.org/"
 
@@ -59,7 +59,8 @@ def login(driver) -> bool:
     print(f"🌐 Opening portal (will redirect to Keycloak login)...")
     driver.get(PORTAL_URL)
 
-    wait = WebDriverWait(driver, 20)
+    # Increased wait to 30 for slower CI/CD runners (e.g., GitHub Actions)
+    wait = WebDriverWait(driver, 30)
 
     try:
         # ── Wait for Keycloak login page ──────────────────────────────────
@@ -121,9 +122,8 @@ def login(driver) -> bool:
 def go_to_scorecard(driver) -> bool:
     """
     Finds the 'Score Card / Get Score Card' tile on the dashboard and clicks it.
-    Based on Image 2: tile has heading 'Score Card' and link 'Get Score Card →'
     """
-    wait = WebDriverWait(driver, 15)
+    wait = WebDriverWait(driver, 30)
     print("\n📋 Finding 'Get Score Card' on dashboard...")
 
     # Priority order: exact link text → partial text → href keyword
@@ -171,10 +171,11 @@ def check_pcm_available(driver) -> bool:
             return False
 
     # ── 2. Check if PCM button/link is present and NOT disabled ──────────
+    # Syntax error fixed and PCB locators removed to avoid false alarms.
     pcm_xpaths = [ 
         "//*[contains(text(),'PCM')]",
         "//*[contains(text(),'Physics') and contains(text(),'Chemistry')]",
-        "//*[contains(text(),'MHT-CET PCM')]","//*[contains(text(),'PCB')]" "//*[contains(text(),'MHT-CET PCB')]",,
+        "//*[contains(text(),'MHT-CET PCM')]"
     ]
 
     for xpath in pcm_xpaths:
@@ -220,26 +221,30 @@ def check_pcm_available(driver) -> bool:
 
 def make_phone_call():
     """Place a Twilio voice call to the user."""
-    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-    twiml = (
-        "<Response>"
-        "<Say voice='alice' language='en-IN'>"
-        "Hello! Important update. Your MHT CET PCM Score Card is now available. "
-        "Please login to portal 2026 dot maharashtracet dot org "
-        "and click on Score Card to view and download your result. Good luck!"
-        "</Say>"
-        "<Pause length='1'/>"
-        "<Say voice='alice' language='en-IN'>"
-        "Repeating: Your MHT CET PCM Score Card is now available. Please check now!"
-        "</Say>"
-        "</Response>"
-    )
-    call = client.calls.create(
-        twiml=twiml,
-        to=YOUR_PHONE_NUMBER,
-        from_=TWILIO_FROM_NUMBER,
-    )
-    print(f"📞 Call placed! SID: {call.sid}")
+    print("📞 Attempting to place Twilio call...")
+    try:
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        twiml = (
+            "<Response>"
+            "<Say voice='alice' language='en-IN'>"
+            "Hello! Important update. Your MHT CET PCM Score Card is now available. "
+            "Please login to portal 2026 dot maharashtracet dot org "
+            "and click on Score Card to view and download your result. Good luck!"
+            "</Say>"
+            "<Pause length='1'/>"
+            "<Say voice='alice' language='en-IN'>"
+            "Repeating: Your MHT CET PCM Score Card is now available. Please check now!"
+            "</Say>"
+            "</Response>"
+        )
+        call = client.calls.create(
+            twiml=twiml,
+            to=YOUR_PHONE_NUMBER,
+            from_=TWILIO_FROM_NUMBER,
+        )
+        print(f"  ✅ Call placed successfully! SID: {call.sid}")
+    except Exception as e:
+        print(f"  ⚠️ Failed to place Twilio call: {e}")
 
 
 def main():
@@ -261,7 +266,7 @@ def main():
             print("\n🎉 PCM RESULT IS AVAILABLE!")
             make_phone_call()
         else:
-            print("\n🔍 Not available yet. Will check again in 15 minutes.")
+            print("\n🔍 Not available yet. Will check again shortly.")
 
     except Exception as e:
         print(f"\n❌ Unexpected error: {e}")
@@ -272,3 +277,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+            
