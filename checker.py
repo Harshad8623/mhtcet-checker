@@ -1,7 +1,8 @@
 """
-MHT-CET Result Checker — Exact Login Version
-Based on: auth-2026.maharashtracet.org + portal-2026.maharashtracet.org
-Logs in → clicks Score Card → checks if PCM result is available → calls you!
+MHT-CET Result Checker — Keycloak Login Version
+Portal: portal-2026.maharashtracet.org
+Auth:   auth-2026.maharashtracet.org (Keycloak)
+Flow:   Login → Dashboard → Score Card → Check PCM → Call via Twilio
 """
 
 import os
@@ -15,34 +16,26 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
-# ── Credentials (stored as GitHub Secrets) ───────────────────────────────────
+# ── Credentials from GitHub Secrets ─────────────────────────────────────────
 MHTCET_EMAIL    = os.environ["MHTCET_EMAIL"]
 MHTCET_PASSWORD = os.environ["MHTCET_PASSWORD"]
 
 TWILIO_ACCOUNT_SID = os.environ["TWILIO_ACCOUNT_SID"]
 TWILIO_AUTH_TOKEN  = os.environ["TWILIO_AUTH_TOKEN"]
-TWILIO_FROM_NUMBER = os.environ["TWILIO_FROM_NUMBER"]  # e.g. +12015551234
-YOUR_PHONE_NUMBER  = os.environ["YOUR_PHONE_NUMBER"]   # e.g. +919876543210
+TWILIO_FROM_NUMBER = os.environ["TWILIO_FROM_NUMBER"]
+YOUR_PHONE_NUMBER  = os.environ["YOUR_PHONE_NUMBER"]
 
-# ── URLs ─────────────────────────────────────────────────────────────────────
 PORTAL_URL = "https://portal-2026.maharashtracet.org/"
-# Portal auto-redirects to login if not logged in
 
-# ── Keywords that mean result is NOT yet available ───────────────────────────
+# ── Phrases meaning result is NOT yet out ────────────────────────────────────
 NOT_AVAILABLE_PHRASES = [
-    "not available",
-    "not declared",
-    "will be declared",
-    "coming soon",
-    "not yet",
-    "result awaited",
-    "no result",
+    "not available", "not declared", "will be declared",
+    "coming soon", "not yet", "result awaited", "no result",
 ]
 
 # ────────────────────────────────────────────────────────────────────────────
 
 def get_driver():
-    """Create a headless Chrome browser."""
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
@@ -60,53 +53,63 @@ def get_driver():
 
 def login(driver) -> bool:
     """
-    Opens portal (auto-redirects to login page).
-    Fills Registered Email ID + Password → clicks Sign In.
+    Handles Keycloak login at auth-2026.maharashtracet.org
+    Keycloak standard field IDs: id='username', id='password', id='kc-login'
     """
-    print(f"🌐 Opening portal: {PORTAL_URL}")
+    print(f"🌐 Opening portal (will redirect to Keycloak login)...")
     driver.get(PORTAL_URL)
 
     wait = WebDriverWait(driver, 20)
 
     try:
-        # Wait for the login form to appear
-        print("⏳ Waiting for login page...")
-        wait.until(EC.presence_of_element_located((By.XPATH, "//input[@type='text' or @type='email']")))
-        time.sleep(1)
+        # ── Wait for Keycloak login page ──────────────────────────────────
+        print("⏳ Waiting for login form...")
+        wait.until(EC.presence_of_element_located((By.ID, "username")))
+        print(f"  ✅ Login page loaded: {driver.current_url}")
 
-        # ── Registered Email ID field ─────────────────────────────────────
-        email_field = driver.find_element(By.XPATH, "//input[@type='text' or @type='email']")
+        # ── Email field (Keycloak uses id='username') ─────────────────────
+        email_field = driver.find_element(By.ID, "username")
         email_field.clear()
         email_field.send_keys(MHTCET_EMAIL)
-        print(f"  ✅ Entered email")
+        print("  ✅ Entered email")
 
-        # ── Password field ─────────────────────────────────────────────────
-        password_field = driver.find_element(By.XPATH, "//input[@type='password']")
+        # ── Password field (Keycloak uses id='password') ──────────────────
+        password_field = driver.find_element(By.ID, "password")
         password_field.clear()
         password_field.send_keys(MHTCET_PASSWORD)
-        print(f"  ✅ Entered password")
+        print("  ✅ Entered password")
 
-        # ── Sign In button ─────────────────────────────────────────────────
-        sign_in_btn = driver.find_element(
-            By.XPATH,
-            "//button[contains(text(),'Sign In') or contains(text(),'sign in') or contains(text(),'LOGIN') or @type='submit']"
-        )
-        sign_in_btn.click()
-        print("  🔐 Clicked Sign In...")
+        # ── Sign In button ────────────────────────────────────────────────
+        # Keycloak uses: <input id="kc-login" type="submit" value="Sign In">
+        # Try id first, then fall back to any submit
+        try:
+            sign_in = driver.find_element(By.ID, "kc-login")
+        except NoSuchElementException:
+            sign_in = driver.find_element(
+                By.XPATH,
+                "//input[@type='submit'] | //button[@type='submit'] | "
+                "//button[contains(translate(.,'SIGNIN','signin'),'sign in')]"
+            )
+        sign_in.click()
+        print("  🔐 Clicked Sign In — waiting for dashboard...")
 
-        # Wait for dashboard to load (URL changes to portal)
+        # ── Wait until we land on the portal dashboard ────────────────────
         wait.until(EC.url_contains("portal-2026.maharashtracet.org"))
-        print(f"  ✅ Logged in! Dashboard loaded.")
         time.sleep(2)
+
+        # ── Confirm login didn't fail ─────────────────────────────────────
+        body = driver.find_element(By.TAG_NAME, "body").text.lower()
+        if any(w in body for w in ["invalid", "incorrect", "wrong", "login failed"]):
+            print("  ❌ Login failed — wrong email or password.")
+            driver.save_screenshot("debug_login_failed.png")
+            return False
+
+        print(f"  ✅ Logged in! Dashboard at: {driver.current_url}")
         return True
 
     except TimeoutException:
-        print("  ❌ Login timed out — page didn't load or redirect failed.")
-        driver.save_screenshot("debug_login_timeout.png")
-        return False
-    except NoSuchElementException as e:
-        print(f"  ❌ Could not find login element: {e}")
-        driver.save_screenshot("debug_login_element.png")
+        print("  ❌ Timed out waiting for login page or dashboard.")
+        driver.save_screenshot("debug_timeout.png")
         return False
     except Exception as e:
         print(f"  ❌ Login error: {e}")
@@ -117,121 +120,113 @@ def login(driver) -> bool:
 
 def go_to_scorecard(driver) -> bool:
     """
-    On the dashboard, find the 'Score Card' tile and click 'Get Score Card'.
-    Returns True if navigation succeeded.
+    Finds the 'Score Card / Get Score Card' tile on the dashboard and clicks it.
+    Based on Image 2: tile has heading 'Score Card' and link 'Get Score Card →'
     """
     wait = WebDriverWait(driver, 15)
-    print("\n📋 Looking for Score Card section on dashboard...")
+    print("\n📋 Finding 'Get Score Card' on dashboard...")
 
-    try:
-        # Find "Get Score Card" link — visible in Image 2
-        scorecard_link = wait.until(EC.element_to_be_clickable((
-            By.XPATH,
-            "//*[contains(text(),'Get Score Card') or contains(text(),'Score Card') or contains(text(),'Scorecard')]"
-            "[self::a or self::button or ancestor::a or ancestor::button]"
-        )))
-        print(f"  ✅ Found Score Card link: '{scorecard_link.text}'")
-        scorecard_link.click()
-        time.sleep(3)
-        print(f"  ✅ Navigated to Score Card page: {driver.current_url}")
-        return True
+    # Priority order: exact link text → partial text → href keyword
+    selectors = [
+        (By.LINK_TEXT,         "Get Score Card"),
+        (By.PARTIAL_LINK_TEXT, "Score Card"),
+        (By.PARTIAL_LINK_TEXT, "Scorecard"),
+        (By.XPATH, "//a[contains(translate(.,'SCORECARD','scorecard'),'score card')]"),
+        (By.XPATH, "//a[contains(@href,'score') or contains(@href,'result')]"),
+        (By.XPATH, "//button[contains(translate(.,'SCORECARD','scorecard'),'score card')]"),
+    ]
 
-    except TimeoutException:
-        # Try finding any link with scorecard href
+    for by, value in selectors:
         try:
-            links = driver.find_elements(By.XPATH, "//a[contains(@href,'score') or contains(@href,'result')]")
-            if links:
-                print(f"  🔗 Found score/result link via href: {links[0].get_attribute('href')}")
-                links[0].click()
-                time.sleep(3)
-                return True
+            el = wait.until(EC.element_to_be_clickable((by, value)))
+            print(f"  ✅ Found Score Card link: '{el.text.strip()}' → clicking")
+            el.click()
+            time.sleep(4)
+            print(f"  ✅ Score Card page: {driver.current_url}")
+            return True
+        except TimeoutException:
+            continue
         except Exception:
-            pass
+            continue
 
-        print("  ❌ Could not find Score Card link on dashboard.")
-        driver.save_screenshot("debug_dashboard.png")
-        return False
+    print("  ❌ Could not find Score Card link.")
+    driver.save_screenshot("debug_dashboard.png")
+    return False
 
 
 def check_pcm_available(driver) -> bool:
     """
-    On the Score Card page, check if PCM result is actually available.
-    Returns True if PCM score card is available.
+    On the Score Card page, detect whether the PCM score card is available.
+    Returns True if result is live.
     """
-    wait = WebDriverWait(driver, 10)
-    current_url = driver.current_url
-    print(f"\n🔍 Checking Score Card page for PCM result... ({current_url})")
+    print(f"\n🔍 Checking for PCM result on: {driver.current_url}")
 
-    page_text = driver.find_element(By.TAG_NAME, "body").text
+    body_text  = driver.find_element(By.TAG_NAME, "body").text
+    body_lower = body_text.lower()
 
-    # ── Check for "not available" messages first ──────────────────────────
-    page_lower = page_text.lower()
+    # ── 1. Hard-stop: explicit "not available" message ───────────────────
     for phrase in NOT_AVAILABLE_PHRASES:
-        if phrase in page_lower:
-            print(f"  ⏳ Result not yet available (found: '{phrase}')")
+        if phrase in body_lower:
+            print(f"  ⏳ Not available yet — page says: '{phrase}'")
             return False
 
-    # ── Look specifically for PCM ─────────────────────────────────────────
-    pcm_indicators = ["PCM", "Physics", "Chemistry", "Mathematics", "MHT-CET PCM"]
-    pcm_found = any(indicator in page_text for indicator in pcm_indicators)
-
-    # ── Look for score/marks data (means result is declared) ─────────────
-    score_indicators = [
-        "Total Marks", "Marks Obtained", "Percentile",
-        "Score", "Rank", "Download", "View Score"
+    # ── 2. Check if PCM button/link is present and NOT disabled ──────────
+    pcm_xpaths = [
+        "//*[contains(text(),'PCM')]",
+        "//*[contains(text(),'Physics') and contains(text(),'Chemistry')]",
+        "//*[contains(text(),'MHT-CET PCM')]",
     ]
-    score_data_found = any(indicator in page_text for indicator in score_indicators)
 
-    # ── Check if PCM option is clickable (not disabled/greyed) ───────────
-    try:
-        pcm_elements = driver.find_elements(
-            By.XPATH,
-            "//*[contains(text(),'PCM') or contains(text(),'Physics, Chemistry')]"
-        )
-        for el in pcm_elements:
-            # If element is a clickable link/button, result is likely available
-            tag = el.tag_name
+    for xpath in pcm_xpaths:
+        elements = driver.find_elements(By.XPATH, xpath)
+        for el in elements:
+            tag      = el.tag_name.lower()
             disabled = el.get_attribute("disabled")
-            classes = el.get_attribute("class") or ""
+            classes  = (el.get_attribute("class") or "").lower()
+            style    = (el.get_attribute("style")  or "").lower()
 
-            if tag in ["a", "button"] and not disabled and "disabled" not in classes.lower():
-                print(f"  🎉 PCM element is CLICKABLE — result likely available!")
-                driver.save_screenshot("result_available.png")
+            is_disabled = (
+                disabled is not None
+                or "disabled" in classes
+                or "locked"   in classes
+                or "greyed"   in classes
+                or "opacity"  in style        # greyed-out via CSS
+            )
+
+            if tag in ["a", "button"] and not is_disabled:
+                print(f"  🎉 PCM is CLICKABLE — result is AVAILABLE!")
+                driver.save_screenshot("result_found.png")
                 return True
 
-            if disabled or "disabled" in classes.lower() or "locked" in classes.lower():
-                print(f"  ⏳ PCM element found but is DISABLED — result not yet available.")
+            if is_disabled:
+                print(f"  ⏳ PCM element exists but is DISABLED (result not declared yet).")
+                driver.save_screenshot("debug_pcm_disabled.png")
                 return False
 
-    except Exception as e:
-        print(f"  ⚠️  Error checking PCM element: {e}")
-
-    # ── Final decision based on page content ─────────────────────────────
-    if pcm_found and score_data_found:
-        print("  🎉 PCM + Score data both found — result is AVAILABLE!")
-        driver.save_screenshot("result_available.png")
+    # ── 3. Fallback: look for score/marks numbers on the page ────────────
+    score_keywords = [
+        "marks obtained", "total marks", "percentile",
+        "your score", "rank", "download scorecard", "view scorecard"
+    ]
+    if any(kw in body_lower for kw in score_keywords):
+        print(f"  🎉 Score data found on page — result is AVAILABLE!")
+        driver.save_screenshot("result_found.png")
         return True
 
-    if pcm_found and not score_data_found:
-        print("  ⏳ PCM section exists but no score data yet — result not declared.")
-        return False
-
-    print("  ⏳ PCM result not detected on this page.")
-    driver.save_screenshot("debug_scorecard_page.png")
+    print("  ⏳ PCM result not detected yet.")
+    driver.save_screenshot("debug_scorecard.png")
     return False
 
 
 def make_phone_call():
-    """Call the user via Twilio to announce result availability."""
+    """Place a Twilio voice call to the user."""
     client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-
     twiml = (
         "<Response>"
         "<Say voice='alice' language='en-IN'>"
-        "Hello! Urgent alert. Your MHT CET PCM Score Card is now available on the portal. "
-        "Please login to portal-2026 dot maharashtracet dot org "
-        "and click on Score Card to view and download your PCM result. "
-        "All the best!"
+        "Hello! Important update. Your MHT CET PCM Score Card is now available. "
+        "Please login to portal 2026 dot maharashtracet dot org "
+        "and click on Score Card to view and download your result. Good luck!"
         "</Say>"
         "<Pause length='1'/>"
         "<Say voice='alice' language='en-IN'>"
@@ -239,7 +234,6 @@ def make_phone_call():
         "</Say>"
         "</Response>"
     )
-
     call = client.calls.create(
         twiml=twiml,
         to=YOUR_PHONE_NUMBER,
@@ -254,33 +248,27 @@ def main():
     print("=" * 55)
 
     driver = get_driver()
-
     try:
-        # Step 1: Login
         if not login(driver):
             print("\n⚠️  Login failed. Check MHTCET_EMAIL / MHTCET_PASSWORD secrets.")
             return
 
-        # Step 2: Go to Score Card section
         if not go_to_scorecard(driver):
-            print("\n⚠️  Could not navigate to Score Card page.")
+            print("\n⚠️  Could not open Score Card page.")
             return
 
-        # Step 3: Check if PCM result is available
         if check_pcm_available(driver):
-            print("\n🎉 PCM RESULT IS AVAILABLE! Calling you now...")
+            print("\n🎉 PCM RESULT IS AVAILABLE!")
             make_phone_call()
         else:
-            print("\n🔍 PCM result not yet available. Will check again in 15 minutes.")
+            print("\n🔍 Not available yet. Will check again in 15 minutes.")
 
     except Exception as e:
         print(f"\n❌ Unexpected error: {e}")
         traceback.print_exc()
-
     finally:
         driver.quit()
-        print("\n✅ Browser closed.")
-
+        print("✅ Done.")
 
 if __name__ == "__main__":
     main()
