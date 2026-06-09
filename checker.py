@@ -171,10 +171,10 @@ def check_pcm_available(driver) -> bool:
             return False
 
     # ── 2. Check if PCM button/link is present and NOT disabled ──────────
-    pcm_xpaths = [
+    pcm_xpaths = [ 
         "//*[contains(text(),'PCM')]",
         "//*[contains(text(),'Physics') and contains(text(),'Chemistry')]",
-        "//*[contains(text(),'MHT-CET PCM')]",
+        "//*[contains(text(),'MHT-CET PCM')]","//*[contains(text(),'PCB')]" "//*[contains(text(),'MHT-CET PCB')]",,
     ]
 
     for xpath in pcm_xpaths:
