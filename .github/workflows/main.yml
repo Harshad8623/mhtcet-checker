@@ -1,15 +1,12 @@
-name: MHT-CET Result Checker
+name: MHT-CET PCM Score Card Checker
 
 on:
   schedule:
-    # Runs every 15 minutes (minimum interval on GitHub Actions)
-    - cron: "*/15 * * * *"
-
-  # Allow manual trigger from GitHub Actions tab
-  workflow_dispatch:
+    - cron: "*/15 * * * *"   # Every 15 minutes
+  workflow_dispatch:          # Manual trigger from Actions tab
 
 jobs:
-  check-result:
+  check-scorecard:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -17,18 +14,34 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install ChromeDriver
+        uses: nanasess/setup-chromedriver@v2
+
+      - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Run result checker
+      - name: Run Score Card checker
         env:
-          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
-          TWILIO_AUTH_TOKEN:  ${{ secrets.TWILIO_AUTH_TOKEN }}
-          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
-          YOUR_PHONE_NUMBER:  ${{ secrets.YOUR_PHONE_NUMBER }}
+          MHTCET_EMAIL:        ${{ secrets.MHTCET_EMAIL }}
+          MHTCET_PASSWORD:     ${{ secrets.MHTCET_PASSWORD }}
+          TWILIO_ACCOUNT_SID:  ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN:   ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER:  ${{ secrets.TWILIO_FROM_NUMBER }}
+          YOUR_PHONE_NUMBER:   ${{ secrets.YOUR_PHONE_NUMBER }}
         run: python checker.py
+
+      - name: Upload debug screenshots (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: "*.png"
+          if-no-files-found: ignore
