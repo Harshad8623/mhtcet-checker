@@ -2,8 +2,8 @@ name: MHT-CET PCM Score Card Checker
 
 on:
   schedule:
-    - cron: "*/1 * * * *"   # Every 15 minutes
-  workflow_dispatch:          # Manual trigger from Actions tab
+    - cron: "*/15 * * * *"      # Actually runs every 15 minutes
+  workflow_dispatch:            # Manual trigger from Actions tab
 
 jobs:
   check-scorecard:
@@ -45,3 +45,4 @@ jobs:
           name: debug-screenshots
           path: "*.png"
           if-no-files-found: ignore
+          
